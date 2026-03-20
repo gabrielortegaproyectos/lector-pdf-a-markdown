@@ -46,20 +46,20 @@ async def parse_pdf_with_llamaparse(filepath: Path, api_key: str) -> tuple[str, 
     client = AsyncLlamaCloud()
 
     uploaded_file = await client.files.create(file=str(filepath), purpose="parse")
-    job = await client.parsing.create(
+    result = await client.parsing.parse(
         file_id=uploaded_file.id,
         tier="agentic",
         version="latest",
+        expand=["markdown", "images_content_metadata"],
         output_options={
             "images_to_save": ["embedded", "layout"],
         },
         page_ranges={
             "max_pages": DAILY_PAGE_LIMIT,
         },
-    )
-    result = await client.parsing.get(
-        job.id,
-        expand=["markdown", "images_content_metadata"],
+        timeout=300,
+        polling_interval=2.0,
+        max_interval=8.0,
     )
 
     pages = getattr(getattr(result, "markdown", None), "pages", []) or []
@@ -69,6 +69,10 @@ async def parse_pdf_with_llamaparse(filepath: Path, api_key: str) -> tuple[str, 
         if getattr(page, "markdown", "").strip()
     ]
     markdown = "\n\n".join(markdown_parts).strip()
+    if not markdown:
+        raise ValueError(
+            "El servidor terminó el procesamiento, pero no devolvió contenido Markdown para este documento."
+        )
     image_entries = []
     images_metadata = getattr(result, "images_content_metadata", None)
     if images_metadata:
