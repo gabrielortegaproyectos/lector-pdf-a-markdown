@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import streamlit as st
 
-from pdf_to_md_app.converter import convert_pdf_to_markdown, load_models
+from pdf_to_md_app.converter import convert_pdf_to_markdown
 
 TEST_PDFS = [
     (
@@ -31,11 +32,6 @@ st.set_page_config(
     page_icon=":page_facing_up:",
     layout="wide",
 )
-
-
-@st.cache_resource(show_spinner=False)
-def get_models() -> object:
-    return load_models()
 
 
 def inject_styles() -> None:
@@ -187,7 +183,7 @@ def render_header() -> None:
                 <small>Universidad Bernardo O'Higgins</small>
                 <h1>Conversor profesional de PDF a Markdown</h1>
                 <p>
-                  Sube un PDF, deja que Marker lo procese y descarga un archivo Markdown
+                  Sube un PDF, deja que LlamaParse lo procese y descarga un archivo Markdown
                   limpio para reutilizarlo en documentación, análisis o publicación.
                 </p>
               </div>
@@ -195,8 +191,8 @@ def render_header() -> None:
             <div class="side-note">
               <strong>Experiencia prevista</strong>
               <span>
-                La primera carga puede tardar un poco más porque el modelo se prepara en segundo plano.
-                Después, el flujo suele ser más rápido.
+                Esta versión delega el procesamiento pesado a LlamaParse para evitar los límites de RAM
+                del hosting gratuito. Necesita una API key válida para funcionar.
               </span>
             </div>
           </div>
@@ -206,11 +202,47 @@ def render_header() -> None:
     )
 
 
+def resolve_default_api_key() -> str:
+    try:
+        if "LLAMA_CLOUD_API_KEY" in st.secrets:
+            return str(st.secrets["LLAMA_CLOUD_API_KEY"])
+    except Exception:
+        pass
+    return os.getenv("LLAMA_CLOUD_API_KEY", "")
+
+
+def render_api_key_panel() -> str:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">API key de LlamaParse</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="section-copy">
+          La app puede usar una clave configurada en <code>LLAMA_CLOUD_API_KEY</code> o una clave ingresada aquí
+          manualmente para pruebas locales.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    default_key = resolve_default_api_key()
+    typed_key = st.text_input(
+        "LLAMA_CLOUD_API_KEY",
+        value=default_key,
+        type="password",
+        help="Si la app está desplegada con secrets configurados, este campo puede venir precargado.",
+    )
+    if typed_key:
+        st.success("API key disponible para la conversión.")
+    else:
+        st.warning("Ingresa una API key válida para habilitar la conversión.")
+    st.markdown("</div>", unsafe_allow_html=True)
+    return typed_key.strip()
+
+
 def render_upload_panel() -> st.runtime.uploaded_file_manager.UploadedFile | None:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Carga tu documento</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-copy">Acepta archivos PDF. Para mejores resultados, usa PDFs digitales legibles y evita escaneos demasiado pesados.</div>',
+        '<div class="section-copy">Acepta archivos PDF. El procesamiento se realiza con LlamaParse en la nube, por lo que ya no depende de la RAM local del hosting.</div>',
         unsafe_allow_html=True,
     )
     uploaded_file = st.file_uploader(
@@ -294,46 +326,48 @@ def main() -> None:
 
     left_col, right_col = st.columns([1.25, 0.95], gap="large")
     sample_pdf_path = Path("assets/sample.pdf")
-
-    with left_col:
-        uploaded_file = render_upload_panel()
-        if uploaded_file is None:
-            st.info("Cuando subas un PDF, aquí aparecerá la conversión en Markdown.")
-        else:
-            try:
-                with st.spinner("Preparando modelos y convirtiendo el PDF a Markdown..."):
-                    models = get_models()
-                    result = convert_pdf_to_markdown(
-                        pdf_bytes=uploaded_file.getvalue(),
-                        source_filename=uploaded_file.name,
-                        artifact_dict=models,
-                    )
-            except Exception as exc:
-                st.error(
-                    "No fue posible completar la conversión. "
-                    "Si estás en Streamlit Cloud, espera un momento y vuelve a intentar con un PDF pequeño."
-                )
-                st.exception(exc)
-            else:
-                st.success(f"Conversión completada para `{uploaded_file.name}`.")
-                render_result(result.markdown, result.output_filename, result.stats)
+    api_key = ""
 
     with right_col:
+        api_key = render_api_key_panel()
         render_help_panel(sample_pdf_path)
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Notas operativas</div>', unsafe_allow_html=True)
         st.markdown(
             """
             <div class="section-copy">
-              Esta app usa <code>marker-pdf</code>. En entornos gratuitos, el primer arranque puede ser más lento
-              por la descarga o inicialización del modelo. Esta versión intenta reducir el pico de memoria
-              convirtiendo el PDF página por página. Si un PDF muy grande falla, prueba primero con uno
-              más pequeño para validar el flujo.
+              Esta app usa <code>LlamaParse</code> para hacer el trabajo pesado fuera de Streamlit Cloud.
+              Eso reduce el riesgo de caídas por RAM, pero introduce dependencia de una API key,
+              conectividad externa y consumo de créditos según el plan de LlamaCloud.
             </div>
             """,
             unsafe_allow_html=True,
         )
         st.markdown("</div>", unsafe_allow_html=True)
+
+    with left_col:
+        uploaded_file = render_upload_panel()
+        if uploaded_file is None:
+            st.info("Cuando subas un PDF, aquí aparecerá la conversión en Markdown.")
+        elif not api_key:
+            st.warning("Configura primero la API key de LlamaParse para procesar el archivo.")
+        else:
+            try:
+                with st.spinner("Enviando el PDF a LlamaParse y generando el Markdown..."):
+                    result = convert_pdf_to_markdown(
+                        pdf_bytes=uploaded_file.getvalue(),
+                        source_filename=uploaded_file.name,
+                        api_key=api_key,
+                    )
+            except Exception as exc:
+                st.error(
+                    "No fue posible completar la conversión. "
+                    "Revisa la API key, la conectividad con LlamaParse o intenta nuevamente en unos segundos."
+                )
+                st.exception(exc)
+            else:
+                st.success(f"Conversión completada para `{uploaded_file.name}`.")
+                render_result(result.markdown, result.output_filename, result.stats)
 
 
 if __name__ == "__main__":

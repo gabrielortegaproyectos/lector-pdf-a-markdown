@@ -1,20 +1,17 @@
 [project]
 name = "lector-pdf-to-md"
 version = "0.1.0"
-description = "Aplicacion Streamlit para convertir PDF a Markdown con marker-pdf."
+description = "Aplicacion Streamlit para convertir archivos PDF a Markdown con LlamaParse."
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-  "marker-pdf==1.10.2",
+  "llama-cloud>=1.0,<2",
   "streamlit==1.50.0",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest==8.4.2",
-]
-mac-app = [
-  "pyinstaller==6.16.0",
 ]
 
 [build-system]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import gc
+import asyncio
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -16,32 +17,49 @@ class ConversionResult:
     source_filename: str
 
 
-def load_models() -> object:
-    """Load and return the Marker model artifacts."""
-    from marker.models import create_model_dict
+def load_api_key(explicit_api_key: str | None = None) -> str:
+    """Resolve the Llama Cloud API key from an explicit value or the environment."""
+    api_key = explicit_api_key or os.getenv("LLAMA_CLOUD_API_KEY", "")
+    if not api_key:
+        raise ValueError(
+            "No se encontró LLAMA_CLOUD_API_KEY. Configúrala en variables de entorno, "
+            "en Streamlit Secrets o ingrésala en la interfaz."
+        )
+    return api_key
 
-    return create_model_dict()
 
+async def parse_pdf_with_llamaparse(filepath: Path, api_key: str) -> tuple[str, int]:
+    """Upload a PDF to LlamaParse and return merged markdown plus page count."""
+    from llama_cloud import AsyncLlamaCloud
 
-def get_pdf_page_count(filepath: Path) -> int:
-    """Return the page count for a PDF file."""
-    import pypdfium2 as pdfium
+    os.environ["LLAMA_CLOUD_API_KEY"] = api_key
+    client = AsyncLlamaCloud()
 
-    document = pdfium.PdfDocument(str(filepath))
-    try:
-        return len(document)
-    finally:
-        document.close()
+    uploaded_file = await client.files.create(file=str(filepath), purpose="parse")
+    result = await client.parsing.parse(
+        file_id=uploaded_file.id,
+        tier="agentic",
+        version="latest",
+        expand=["markdown"],
+    )
+
+    pages = getattr(getattr(result, "markdown", None), "pages", []) or []
+    markdown_parts = [
+        getattr(page, "markdown", "").strip()
+        for page in pages
+        if getattr(page, "markdown", "").strip()
+    ]
+    markdown = "\n\n".join(markdown_parts).strip()
+    return markdown, len(pages)
 
 
 def convert_pdf_to_markdown(
     pdf_bytes: bytes,
     source_filename: str,
-    artifact_dict: object,
+    api_key: str | None = None,
 ) -> ConversionResult:
-    """Convert uploaded PDF bytes into markdown using Marker."""
-    from marker.converters.pdf import PdfConverter
-    from marker.output import text_from_rendered
+    """Convert uploaded PDF bytes into markdown using LlamaParse."""
+    resolved_api_key = load_api_key(api_key)
 
     suffix = Path(source_filename).suffix or ".pdf"
     with NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
@@ -49,25 +67,9 @@ def convert_pdf_to_markdown(
         temp_file.write(pdf_bytes)
 
     try:
-        page_count = get_pdf_page_count(temp_path)
-        markdown_parts: list[str] = []
-
-        for page_index in range(page_count):
-            converter = PdfConverter(
-                artifact_dict=artifact_dict,
-                config={"page_range": [page_index]},
-            )
-            rendered = converter(str(temp_path))
-            page_markdown, _, _ = text_from_rendered(rendered)
-            cleaned_page_markdown = page_markdown.strip()
-            if cleaned_page_markdown:
-                markdown_parts.append(cleaned_page_markdown)
-
-            del rendered
-            del converter
-            gc.collect()
-
-        markdown = "\n\n".join(markdown_parts).strip()
+        markdown, page_count = asyncio.run(
+            parse_pdf_with_llamaparse(temp_path, resolved_api_key)
+        )
     finally:
         temp_path.unlink(missing_ok=True)
 
