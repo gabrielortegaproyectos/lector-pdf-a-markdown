@@ -1,14 +1,16 @@
 # Lector PDF a Markdown
 
-Aplicacion de Streamlit para convertir archivos PDF a Markdown con `LlamaParse`, pensada para una experiencia simple, profesional y lista para desplegar en Streamlit Community Cloud.
+Aplicacion de Streamlit para convertir archivos PDF a Markdown, pensada para una experiencia simple, profesional y lista para desplegar en Streamlit Community Cloud.
 
 ## Qué hace
 
 - Recibe un archivo PDF desde la interfaz.
-- Envía el documento a LlamaParse para obtener Markdown sin depender de la RAM local del hosting.
+- Envía el documento a un servicio externo para obtener Markdown.
 - Muestra una vista previa del resultado.
 - Permite descargar el archivo `.md`.
+- Si el servicio detecta imágenes exportables, muestra enlaces para descargarlas.
 - Ofrece un PDF de muestra local y cuatro PDFs públicos para probar la aplicación.
+- Aplica un límite diario de 900 páginas para cuidar el cupo disponible del servicio.
 
 ## Requisitos
 
@@ -20,16 +22,15 @@ Aplicacion de Streamlit para convertir archivos PDF a Markdown con `LlamaParse`,
 
 ```bash
 uv sync
-export LLAMA_CLOUD_API_KEY=llx-...
 uv run streamlit run app.py
 ```
 
-Tambien puedes definir la API key como secret en Streamlit Cloud usando el nombre `LLAMA_CLOUD_API_KEY`.
+La credencial del servidor debe configurarse con el nombre `LLAMA_CLOUD_API_KEY`.
 
 ## Estructura principal
 
 - `app.py`: interfaz Streamlit.
-- `src/pdf_to_md_app/converter.py`: integración con LlamaParse y conversión PDF a Markdown.
+- `src/pdf_to_md_app/converter.py`: integración del servicio de conversión PDF a Markdown.
 - `src/pdf_to_md_app/utils.py`: helpers para nombre de salida y métricas.
 - `.streamlit/config.toml`: tema visual base.
 - `assets/sample.pdf`: PDF de muestra incluido en el repositorio.
@@ -59,6 +60,7 @@ Tienes tres opciones:
 ## Notas importantes
 
 - Se fija Python `3.11` para mantener un entorno estable en desarrollo y despliegue.
-- Esta version depende de LlamaParse, asi que requiere internet y una API key valida.
-- LlamaParse consume creditos segun el modo usado. Revisa su pricing antes de abrir la app al publico.
-- Si la conversion falla, revisa primero que la API key este bien configurada y que el servicio tenga disponibilidad.
+- Esta version depende de una credencial configurada en el servidor y de conectividad externa.
+- La app aplica un límite diario visible de 900 páginas y muestra el cupo restante del día.
+- Si el servicio devuelve imágenes exportables, la interfaz muestra enlaces de descarga.
+- Si la conversion falla, revisa primero que el secret del servidor este configurado y que el servicio tenga disponibilidad.

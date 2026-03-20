@@ -1,11 +1,10 @@
 from __future__ import annotations
-
-import os
 from pathlib import Path
 
 import streamlit as st
 
-from pdf_to_md_app.converter import convert_pdf_to_markdown
+from pdf_to_md_app.converter import DEFAULT_LLAMA_CLOUD_API_KEY, convert_pdf_to_markdown, get_pdf_page_count
+from pdf_to_md_app.usage import DAILY_PAGE_LIMIT, can_process_pages, get_remaining_pages, register_processed_pages
 
 TEST_PDFS = [
     (
@@ -183,7 +182,7 @@ def render_header() -> None:
                 <small>Universidad Bernardo O'Higgins</small>
                 <h1>Conversor profesional de PDF a Markdown</h1>
                 <p>
-                  Sube un PDF, deja que LlamaParse lo procese y descarga un archivo Markdown
+                  Sube un PDF, deja que el servidor procese el documento y descarga un archivo Markdown
                   limpio para reutilizarlo en documentación, análisis o publicación.
                 </p>
               </div>
@@ -191,8 +190,8 @@ def render_header() -> None:
             <div class="side-note">
               <strong>Experiencia prevista</strong>
               <span>
-                Esta versión delega el procesamiento pesado a LlamaParse para evitar los límites de RAM
-                del hosting gratuito. Necesita una API key válida para funcionar.
+                La conversión se ejecuta en un servidor para mantener una experiencia más estable
+                en el despliegue público.
               </span>
             </div>
           </div>
@@ -202,47 +201,20 @@ def render_header() -> None:
     )
 
 
-def resolve_default_api_key() -> str:
+def resolve_server_api_key() -> str:
     try:
         if "LLAMA_CLOUD_API_KEY" in st.secrets:
-            return str(st.secrets["LLAMA_CLOUD_API_KEY"])
+            return str(st.secrets["LLAMA_CLOUD_API_KEY"]).strip()
     except Exception:
         pass
-    return os.getenv("LLAMA_CLOUD_API_KEY", "")
-
-
-def render_api_key_panel() -> str:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">API key de LlamaParse</div>', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="section-copy">
-          La app puede usar una clave configurada en <code>LLAMA_CLOUD_API_KEY</code> o una clave ingresada aquí
-          manualmente para pruebas locales.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    default_key = resolve_default_api_key()
-    typed_key = st.text_input(
-        "LLAMA_CLOUD_API_KEY",
-        value=default_key,
-        type="password",
-        help="Si la app está desplegada con secrets configurados, este campo puede venir precargado.",
-    )
-    if typed_key:
-        st.success("API key disponible para la conversión.")
-    else:
-        st.warning("Ingresa una API key válida para habilitar la conversión.")
-    st.markdown("</div>", unsafe_allow_html=True)
-    return typed_key.strip()
+    return DEFAULT_LLAMA_CLOUD_API_KEY
 
 
 def render_upload_panel() -> st.runtime.uploaded_file_manager.UploadedFile | None:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Carga tu documento</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-copy">Acepta archivos PDF. El procesamiento se realiza con LlamaParse en la nube, por lo que ya no depende de la RAM local del hosting.</div>',
+        '<div class="section-copy">Acepta archivos PDF. El procesamiento se realiza en un servidor externo para evitar los límites del hosting.</div>',
         unsafe_allow_html=True,
     )
     uploaded_file = st.file_uploader(
@@ -320,25 +292,44 @@ def render_result(result_markdown: str, output_filename: str, stats: dict[str, i
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def render_images_panel(images: list[dict[str, str]]) -> None:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Imágenes detectadas</div>', unsafe_allow_html=True)
+    if not images:
+        st.markdown(
+            '<div class="section-copy">El servicio no devolvió imágenes descargables para este documento.</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    st.markdown(
+        '<div class="section-copy">Si el servicio detectó imágenes exportables, puedes descargarlas desde estos enlaces.</div>',
+        unsafe_allow_html=True,
+    )
+    for image in images:
+        label = f'{image["filename"]} ({image["category"]})'
+        st.markdown(f'- [{label}]({image["url"]})')
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def main() -> None:
     inject_styles()
     render_header()
 
     left_col, right_col = st.columns([1.25, 0.95], gap="large")
     sample_pdf_path = Path("assets/sample.pdf")
-    api_key = ""
+    api_key = resolve_server_api_key()
 
     with right_col:
-        api_key = render_api_key_panel()
         render_help_panel(sample_pdf_path)
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Notas operativas</div>', unsafe_allow_html=True)
         st.markdown(
-            """
+            f"""
             <div class="section-copy">
-              Esta app usa <code>LlamaParse</code> para hacer el trabajo pesado fuera de Streamlit Cloud.
-              Eso reduce el riesgo de caídas por RAM, pero introduce dependencia de una API key,
-              conectividad externa y consumo de créditos según el plan de LlamaCloud.
+              La conversión se realiza en un servidor. El límite diario de esta aplicación es de {DAILY_PAGE_LIMIT} páginas.
+              Hoy quedan {get_remaining_pages()} páginas disponibles.
             </div>
             """,
             unsafe_allow_html=True,
@@ -350,24 +341,48 @@ def main() -> None:
         if uploaded_file is None:
             st.info("Cuando subas un PDF, aquí aparecerá la conversión en Markdown.")
         elif not api_key:
-            st.warning("Configura primero la API key de LlamaParse para procesar el archivo.")
+            st.error("La aplicación no tiene configurada la credencial del servidor.")
         else:
+            uploaded_bytes = uploaded_file.getvalue()
+            page_count = get_pdf_page_count(uploaded_bytes)
+            remaining_pages = get_remaining_pages()
+            if page_count > DAILY_PAGE_LIMIT:
+                st.error(
+                    f"Este archivo tiene {page_count} páginas y supera el límite diario de {DAILY_PAGE_LIMIT} páginas."
+                )
+                st.info("El límite diario existe para evitar exceder el cupo disponible del servicio.")
+                return
+            if not can_process_pages(page_count):
+                st.error(
+                    f"Hoy quedan {remaining_pages} páginas disponibles y este archivo requiere {page_count}."
+                )
+                st.info("Ese es el límite diario de la aplicación.")
+                return
+
+            st.info(
+                f"Este documento tiene {page_count} páginas. Hoy quedan {remaining_pages} páginas disponibles del límite diario de {DAILY_PAGE_LIMIT}."
+            )
             try:
-                with st.spinner("Enviando el PDF a LlamaParse y generando el Markdown..."):
+                with st.spinner("Procesando el PDF en el servidor y generando el Markdown..."):
                     result = convert_pdf_to_markdown(
-                        pdf_bytes=uploaded_file.getvalue(),
+                        pdf_bytes=uploaded_bytes,
                         source_filename=uploaded_file.name,
                         api_key=api_key,
                     )
             except Exception as exc:
                 st.error(
                     "No fue posible completar la conversión. "
-                    "Revisa la API key, la conectividad con LlamaParse o intenta nuevamente en unos segundos."
+                    "Intenta nuevamente en unos segundos."
                 )
                 st.exception(exc)
             else:
+                usage_state = register_processed_pages(page_count)
                 st.success(f"Conversión completada para `{uploaded_file.name}`.")
+                st.caption(
+                    f"Uso registrado: {usage_state.used_pages}/{DAILY_PAGE_LIMIT} páginas consumidas hoy."
+                )
                 render_result(result.markdown, result.output_filename, result.stats)
+                render_images_panel(result.images)
 
 
 if __name__ == "__main__":
