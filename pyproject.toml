@@ -13,6 +13,9 @@ dependencies = [
 dev = [
   "pytest==8.4.2",
 ]
+mac-app = [
+  "pyinstaller==6.16.0",
+]
 
 [build-system]
 requires = ["hatchling"]

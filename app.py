@@ -262,11 +262,12 @@ def render_result(result_markdown: str, output_filename: str, stats: dict[str, i
         unsafe_allow_html=True,
     )
 
-    metric_columns = st.columns(4)
-    metric_columns[0].metric("Líneas", stats["lineas"])
-    metric_columns[1].metric("Palabras", stats["palabras"])
-    metric_columns[2].metric("Caracteres", stats["caracteres"])
-    metric_columns[3].metric("Encabezados", stats["encabezados"])
+    metric_columns = st.columns(5)
+    metric_columns[0].metric("Páginas", stats.get("paginas", 0))
+    metric_columns[1].metric("Líneas", stats["lineas"])
+    metric_columns[2].metric("Palabras", stats["palabras"])
+    metric_columns[3].metric("Caracteres", stats["caracteres"])
+    metric_columns[4].metric("Encabezados", stats["encabezados"])
 
     st.download_button(
         "Descargar Markdown",
@@ -325,7 +326,8 @@ def main() -> None:
             """
             <div class="section-copy">
               Esta app usa <code>marker-pdf</code>. En entornos gratuitos, el primer arranque puede ser más lento
-              por la descarga o inicialización del modelo. Si un PDF muy grande falla, prueba primero con uno
+              por la descarga o inicialización del modelo. Esta versión intenta reducir el pico de memoria
+              convirtiendo el PDF página por página. Si un PDF muy grande falla, prueba primero con uno
               más pequeño para validar el flujo.
             </div>
             """,
